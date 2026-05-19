@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Servidor Flask local para desenvolvimento (Vite faz proxy de /api → esta porta)."""
+"""
+Único ponto de entrada do back-end.
+
+- Vercel: usa a variável `app` (ver pyproject.toml → entrypoint = "main:app")
+- Local:  python main.py   ou   ./scripts/dev.sh
+"""
 from __future__ import annotations
 
 import os
@@ -60,7 +65,7 @@ def _pick_free_port(start: int) -> int:
     sys.exit(1)
 
 
-if __name__ == "__main__":
+def _run_dev_server() -> None:
     port = DEV_PORT
 
     if _port_open(port):
@@ -70,11 +75,11 @@ if __name__ == "__main__":
             print("  Não precisa iniciar de novo.")
             print("  No outro terminal:  cd front-end && npm run dev")
             print("")
-            sys.exit(0)
+            return
         print("")
         print(f"  Porta {port} está ocupada por outro programa.")
         print(f"  Encerre com:  fuser -k {port}/tcp")
-        print(f"  Ou use outra porta:  FLASK_DEV_PORT=3002 ./venv/bin/python3 back-end/run_dev.py")
+        print(f"  Ou use outra porta:  FLASK_DEV_PORT=3002 python main.py")
         print("  (e no front-end/.env: VITE_DEV_API_PROXY=http://127.0.0.1:3002)")
         print("")
         sys.exit(1)
@@ -102,3 +107,7 @@ if __name__ == "__main__":
         threaded=True,
         use_reloader=False,
     )
+
+
+if __name__ == "__main__":
+    _run_dev_server()

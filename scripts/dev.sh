@@ -11,4 +11,4 @@ else
 fi
 
 cd "${ROOT}"
-exec "${PY}" run_dev.py
+exec "${PY}" main.py

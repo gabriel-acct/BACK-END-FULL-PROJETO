@@ -1,4 +1,4 @@
-"""Aplicação Flask (entrada WSGI em wsgi.py na Vercel)."""
+"""Aplicação Flask (entrada em main.py — local e Vercel)."""
 
 from flask import Flask
 from flask_cors import CORS
