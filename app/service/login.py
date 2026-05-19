@@ -6,8 +6,8 @@ intentificar_painel identifica admin (banco) ou sub-usuário (API DataImpulse).
 
 from app.service.cpa_login import login_cpa_por_credencial
 from app.service.format import parse_porta_usuario_senha
-from app.service.segury import issue_admin_token, issue_token
-from app.service.sub_usuarios import get_all_user
+from app.service.segury import issue_admin_token
+from app.service.sub_usuarios import authenticate_subuser_by_login
 from db.queries_login import login_admin
 from db.queries_usuario import get_admin_completo
 
@@ -51,10 +51,10 @@ def _login_admin(username: str, password: str) -> dict:
 
 
 def _login_subusuario(login: str, password: str) -> dict:
-    data = get_all_user()
-    if not data["status"]:
-        api_msg = str(data.get("message") or "")
-        if "token" in api_msg.lower():
+    result = authenticate_subuser_by_login(login, password)
+    if not result["status"]:
+        api_msg = str(result.get("message") or "")
+        if "token" in api_msg.lower() and "expired" in api_msg.lower():
             return {
                 "status": False,
                 "message": (
@@ -62,23 +62,7 @@ def _login_subusuario(login: str, password: str) -> dict:
                     "Verifique LOGIN/PASSWORD no .env e tente novamente."
                 ),
             }
-        return {
-            "status": False,
-            "message": data.get("message", "Erro ao listar usuários"),
-        }
-    for user in data["users"]:
-        if user["login"] == login and user["password"] == password:
-            token = issue_token(user["id"])  # type: ignore
-            return {
-                "status": True,
-                "message": "Login realizado com sucesso",
-                "role": "subuser",
-                "token": token,
-            }
-    return {
-        "status": False,
-        "message": "Credencial inválida",
-    }
+    return result
 
 
 def intentificar_painel(credential: str) -> dict:

@@ -344,6 +344,38 @@ def insert_host_view_dashboard(host: str):
     return insert_proxy_host(host)
 
 
+def get_subuser_local_by_login(login: str) -> dict:
+    """Busca sub-usuário local pelo login (evita listar todos na API no login)."""
+    user_login = (login or "").strip()
+    if not user_login:
+        return {"status": False, "message": "Login vazio"}
+
+    conn = None
+    cursor = None
+    try:
+        conn = conexao()
+        if conn is None:
+            return {"status": False, "message": "Erro ao conectar no banco de dados"}
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT external_subuser_id, login, label, criado_por, limite_gb, ativo
+            FROM painel_subusers_local
+            WHERE login = %s AND ativo = 1
+            LIMIT 1
+            """,
+            (user_login,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"status": False, "message": "Sub-usuário local não encontrado"}
+        return {"status": True, "row": row}
+    except Exception as e:
+        return {"status": False, "message": str(e)[:300]}
+    finally:
+        fechar_conexao(conn, cursor)
+
+
 def list_subusers_local_map() -> dict:
     """Mapa external_subuser_id → registro local (label, limite_gb, etc.)."""
     conn = None

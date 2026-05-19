@@ -125,16 +125,31 @@ def public_blocked_hosts():
 
 @bp.post("/auth/login")
 def login():
+    from app.security.login_limiter import (
+        check_login_allowed,
+        client_key_from_request,
+        record_login_failure,
+        record_login_success,
+    )
+
+    client_key = client_key_from_request(request)
+    allowed, block_msg = check_login_allowed(client_key)
+    if not allowed:
+        return jsonify(error=block_msg), 429
+
     data = request.get_json(silent=True) or {}
     credential = data.get("credential", "")
     try:
         porta, username, senha = parse_porta_usuario_senha(str(credential))
         user = authenticate_port_user_pass(porta, username, senha)
     except ValueError as e:
+        record_login_failure(client_key)
         return jsonify(error=str(e)), 400
     except PermissionError as e:
+        record_login_failure(client_key)
         return jsonify(error=str(e)), 401
 
+    record_login_success(client_key)
     token = issue_token(user["username"], int(user["porta"]))
     return jsonify(access_token=token, token_type="bearer")
 

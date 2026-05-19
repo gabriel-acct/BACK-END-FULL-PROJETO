@@ -1,9 +1,28 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
-from db.queires import get_token, update_token
+from db.queires import get_subuser_local_by_login, get_token, update_token
 import requests
 from config import ResellerBackend
+
 ResellerBackendData = ResellerBackend()
+
+_SUBUSER_LIST_CACHE: dict = {"at": 0.0, "users": None}
+_SUBUSER_LIST_CACHE_TTL_SEC = 120.0
+
+
+def _is_rate_limit_message(message: str | None) -> bool:
+    msg = (message or "").lower()
+    return "too many attempt" in msg or "rate limit" in msg or "too many request" in msg
+
+
+def _friendly_api_limit_message(message: str | None) -> str:
+    if _is_rate_limit_message(message):
+        return (
+            "A API da proxy limitou as consultas (muitas tentativas). "
+            "Aguarde 5–15 minutos e tente novamente."
+        )
+    return (message or "Erro ao consultar API da proxy").strip()
 def _is_token_expired_response(data) -> bool:
     """Detecta token expirado em respostas da API (qualquer status HTTP)."""
     if not isinstance(data, dict):
@@ -109,13 +128,23 @@ def valid_token_and_generate_new_token(*, force_refresh: bool = False):
         "token": token_db["token"],
     }
 
-def get_all_user():
+def get_all_user(*, use_cache: bool = True):
+    now = time.time()
+    if use_cache and _SUBUSER_LIST_CACHE["users"] is not None:
+        if now - float(_SUBUSER_LIST_CACHE["at"]) < _SUBUSER_LIST_CACHE_TTL_SEC:
+            return {
+                "status": True,
+                "message": "Usuários (cache)",
+                "users": _SUBUSER_LIST_CACHE["users"],
+                "cached": True,
+            }
+
     token = valid_token_and_generate_new_token()
 
     if not token["status"]:
         return {
             "status": False,
-            "message": token["message"],
+            "message": _friendly_api_limit_message(token.get("message")),
         }
 
     url = f"{ResellerBackendData.API_URL}/reseller/sub-user/list"
@@ -157,9 +186,10 @@ def get_all_user():
             "response": data,
         }
     if r.status_code != 200:
+        api_msg = data.get("message", "API retornou erro")
         return {
             "status": False,
-            "message": data.get("message", "API retornou erro"),
+            "message": _friendly_api_limit_message(str(api_msg)),
             "response": data,
         }
 
@@ -169,16 +199,93 @@ def get_all_user():
         print("Nenhum usuário encontrado")
         return {
             "status": False,
-            "message": data.get("message", "Nenhum usuário encontrado"),
+            "message": _friendly_api_limit_message(data.get("message", "Nenhum usuário encontrado")),
             "response": data
         }
 
+    _SUBUSER_LIST_CACHE["at"] = now
+    _SUBUSER_LIST_CACHE["users"] = subusers
 
     return {
         "status": True,
         "message": "Usuários encontrados com sucesso",
         "users": subusers
     }
+
+
+def _normalize_subuser_row(raw: dict | None) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    nested = raw.get("user") if isinstance(raw.get("user"), dict) else raw
+    if not isinstance(nested, dict):
+        return None
+    uid = nested.get("id") or nested.get("subuser_id")
+    login = nested.get("login")
+    if uid is None or not login:
+        return None
+    password = nested.get("password")
+    return {
+        "id": int(uid),
+        "login": str(login).strip(),
+        "password": password if password is not None else "",
+    }
+
+
+def authenticate_subuser_by_login(login: str, password: str) -> dict:
+    """
+    Valida sub-usuário Proxy Private sem listar todos na API quando possível.
+    1) painel_subusers_local + GET /sub-user/get (1 chamada)
+    2) fallback: lista em cache (máx. 1 listagem a cada 2 min)
+    """
+    from app.service.segury import issue_token
+
+    login_s = (login or "").strip()
+    if not login_s:
+        return {"status": False, "message": "Informe o usuário da credencial"}
+
+    local = get_subuser_local_by_login(login_s)
+    if local.get("status") and local.get("row"):
+        ext_id = local["row"].get("external_subuser_id")
+        try:
+            sub_id = int(str(ext_id).strip())
+        except (TypeError, ValueError):
+            sub_id = None
+        if sub_id is not None:
+            api = get_user_by_id(sub_id)
+            if api.get("status"):
+                row = _normalize_subuser_row(api.get("user") or api)
+                if row and row["login"] == login_s and row["password"] == password:
+                    token = issue_token(row["id"])
+                    return {
+                        "status": True,
+                        "message": "Login realizado com sucesso",
+                        "role": "subuser",
+                        "token": token,
+                    }
+
+    data = get_all_user(use_cache=True)
+    if not data["status"]:
+        return {
+            "status": False,
+            "message": data.get("message", "Erro ao consultar API da proxy"),
+        }
+
+    for user in data.get("users") or []:
+        if not isinstance(user, dict):
+            continue
+        if user.get("login") == login_s and user.get("password") == password:
+            uid = user.get("id")
+            if uid is None:
+                continue
+            token = issue_token(int(uid))
+            return {
+                "status": True,
+                "message": "Login realizado com sucesso",
+                "role": "subuser",
+                "token": token,
+            }
+
+    return {"status": False, "message": "Credencial inválida"}
 
 
 def _build_proxy_credential(hostname: str, port: int, login: str, password: str) -> str | None:

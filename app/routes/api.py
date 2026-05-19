@@ -68,7 +68,19 @@ def branding_favicon_route():
 @api_bp.route("/login", methods=["POST"])
 def login_route():
     """Login unificado: admin (banco) ou sub-usuário (API) via credencial."""
+    from app.security.login_limiter import (
+        check_login_allowed,
+        client_key_from_request,
+        record_login_failure,
+        record_login_success,
+    )
+
     try:
+        client_key = client_key_from_request(request)
+        allowed, block_msg = check_login_allowed(client_key)
+        if not allowed:
+            return jsonify({"status": False, "message": block_msg}), 429
+
         body = request.get_json(silent=True) or {}
         credential = _credential_from_body(body)
         if not credential:
@@ -78,7 +90,9 @@ def login_route():
             }), 400
         data = intentificar_painel(credential)
         if not data["status"]:
+            record_login_failure(client_key)
             return jsonify(data), 400
+        record_login_success(client_key)
         return jsonify(data), 200
     except Exception as e:
         return jsonify({
