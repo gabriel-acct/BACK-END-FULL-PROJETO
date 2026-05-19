@@ -8,7 +8,8 @@ Projeto **autônomo** — deploy na Vercel com esta pasta como raiz do projeto.
 
 ```
 back-end/
-  api/index.py       # entrada serverless Vercel
+  wsgi.py            # entrada Flask na Vercel
+  pyproject.toml     # entrypoint para a Vercel
   vercel.json        # deploy só da API
   app/               # Proxy Private
   cpa_panel/         # CPA Proxy
@@ -44,7 +45,7 @@ Em produção, use as mesmas chaves no painel da Vercel (não commite `.env`).
 ## Deploy (Vercel)
 
 1. Novo projeto Vercel → **Root Directory**: `back-end` (se o repo for monorepo).
-2. Framework: Other / Python (detecta `api/index.py` + `requirements.txt`).
+2. Framework: Flask (detecta `wsgi.py` + `requirements.txt` + `pyproject.toml`).
 3. Variáveis de ambiente = conteúdo de `.env.example`.
 
 Teste: `GET https://sua-api.vercel.app/api/health`
