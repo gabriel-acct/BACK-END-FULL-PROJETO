@@ -1,2 +1,16 @@
+[project]
+name = "painel-backend"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "Flask>=3.0.0",
+    "flask-cors>=5.0.0",
+    "PyJWT>=2.9.0",
+    "mysql-connector-python>=9.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "Werkzeug>=3.0.0",
+]
+
 [tool.vercel]
 entrypoint = "main:app"
