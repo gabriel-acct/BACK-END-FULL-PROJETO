@@ -12,10 +12,11 @@ def create_app() -> Flask:
     app.config.from_object(Config)
     CORS(
         app,
-        resources={r"/api/*": {"origins": cors_origin_patterns()}},
+        origins=cors_origin_patterns(),
         supports_credentials=True,
         allow_headers=["Content-Type", "Authorization", "X-Are-Ceo", "X-Ceo-Unlock"],
         methods=["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
+        expose_headers=["Content-Type"],
     )
 
     @app.route("/")
