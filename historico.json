@@ -1,0 +1,46 @@
+{
+    "data": {
+        "total_count": 164,
+        "usage": [
+            {
+                "datetime": "2026-05-15 00:18:00 UTC",
+                "extra_traffic": "0 bytes",
+                "host": "proxy-checker.dolphin-anty-mirror3.com:80",
+                "message": null,
+                "requests": 0,
+                "status": "success",
+                "traffic": "1 KB"
+            },
+            {
+                "datetime": "2026-05-15 00:17:00 UTC",
+                "extra_traffic": "0 bytes",
+                "host": "35.157.178.163:80",
+                "message": null,
+                "requests": 2,
+                "status": "success",
+                "traffic": "1.87 KB"
+            },
+            {
+                "datetime": "2026-05-15 00:17:00 UTC",
+                "extra_traffic": "0 bytes",
+                "host": "3.74.241.196:80",
+                "message": null,
+                "requests": 2,
+                "status": "success",
+                "traffic": "1.87 KB"
+            },
+            {
+                "datetime": "2026-05-15 00:17:00 UTC",
+                "extra_traffic": "0 bytes",
+                "host": "103.253.40.125:80",
+                "message": null,
+                "requests": 2,
+                "status": "success",
+                "traffic": "2.05 KB"
+            }
+        ]
+    },
+
+    "message": "Histórico consultado com sucesso",
+    "status": true
+}

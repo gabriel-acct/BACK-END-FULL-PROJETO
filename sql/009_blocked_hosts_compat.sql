@@ -1,0 +1,12 @@
+-- Compatível com MySQL sem IF NOT EXISTS em colunas
+CREATE TABLE IF NOT EXISTS painel_blocked_hosts (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  hostname VARCHAR(253) NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  ativo TINYINT(1) NOT NULL DEFAULT 1,
+  protegido_painel TINYINT(1) NOT NULL DEFAULT 1,
+  criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_painel_blocked_hosts_hostname (hostname)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

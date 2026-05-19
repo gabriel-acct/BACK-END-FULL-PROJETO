@@ -1,0 +1,12 @@
+-- Preferência no código: **`criado_em`** (aceita também **`created_at`** legado).
+--
+-- Escolha UMA linha compatível com o seu banco (descomente se precisar):
+--
+-- Renomear coluna existente:
+-- ALTER TABLE usuarios_proxy CHANGE COLUMN created_at criado_em DATETIME NULL DEFAULT NULL;
+--
+-- Ou criar se ainda não existir data:
+-- ALTER TABLE usuarios_proxy ADD COLUMN criado_em DATETIME NULL DEFAULT NULL AFTER cargo_id;
+--
+-- Índice (opcional):
+-- CREATE INDEX idx_usuarios_proxy_criado_em ON usuarios_proxy (criado_em);
