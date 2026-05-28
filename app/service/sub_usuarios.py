@@ -449,6 +449,169 @@ def get_all_users_enriched_for_admin(*, proxy_port: int = 823, max_workers: int 
     }
 
 
+def _subuser_list_apply_filters_sort(
+    users_raw: list[dict],
+    *,
+    q: str | None = None,
+    status_filter: str | None = None,
+    sort_key: str | None = None,
+) -> list[dict]:
+    q_s = (q or "").strip().lower()
+    status_s = (status_filter or "all").strip().lower()
+    sort_s = (sort_key or "id_desc").strip().lower()
+
+    out: list[dict] = []
+    for r in users_raw or []:
+        if not isinstance(r, dict):
+            continue
+        blocked = bool(r.get("blocked"))
+        if status_s == "active" and blocked:
+            continue
+        if status_s == "blocked" and not blocked:
+            continue
+        if q_s:
+            rid = str(r.get("id") or "")
+            login = str(r.get("login") or "").lower()
+            label = str(r.get("label") or "").lower()
+            if q_s not in rid and q_s not in login and q_s not in label:
+                continue
+        out.append(r)
+
+    def _cmp_key(row: dict):
+        if sort_s == "login_asc":
+            return (str(row.get("login") or "").lower(), int(row.get("id") or 0))
+        if sort_s == "label_asc":
+            return (str(row.get("label") or "").lower(), int(row.get("id") or 0))
+        # id_desc
+        return (-(int(row.get("id") or 0)),)
+
+    out.sort(key=_cmp_key)
+    return out
+
+
+def get_users_enriched_for_admin_page(
+    *,
+    proxy_port: int = 823,
+    page: int = 0,
+    limit: int = 10,
+    q: str | None = None,
+    status: str | None = None,
+    sort: str | None = None,
+    max_workers: int = 8,
+) -> dict:
+    """
+    Paginação no painel admin:
+    - Sempre busca a lista na API externa (não paginada).
+    - Porém só enriquece (saldo/credenciais) os itens da página pedida.
+    """
+    try:
+        page_n = max(0, int(page))
+    except (TypeError, ValueError):
+        page_n = 0
+    try:
+        limit_n = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        limit_n = 10
+
+    base = get_all_user()
+    if not base.get("status"):
+        return base
+
+    from db.queires import get_proxy_hostnames_for_dashboard, list_subusers_local_map
+
+    hosts_res = get_proxy_hostnames_for_dashboard()
+    hosts: list[str] = []
+    if hosts_res.get("status") and hosts_res.get("hosts"):
+        hosts = [str(h).strip() for h in hosts_res["hosts"] if str(h).strip()]
+    if not hosts:
+        hosts = ["painel.local"]
+
+    local_map = {}
+    lm = list_subusers_local_map()
+    if lm.get("status"):
+        local_map = lm.get("map") or {}
+
+    users_raw = base.get("users") or []
+    if not users_raw:
+        return {
+            "status": True,
+            "message": "Nenhum usuário na API",
+            "users": [],
+            "total": 0,
+            "page": page_n,
+            "limit": limit_n,
+            "proxy_hosts": hosts,
+            "proxy_port": int(proxy_port),
+        }
+
+    filtered = _subuser_list_apply_filters_sort(users_raw, q=q, status_filter=status, sort_key=sort)
+    total = len(filtered)
+    start = page_n * limit_n
+    end = start + limit_n
+    page_raw = filtered[start:end]
+
+    if not page_raw:
+        return {
+            "status": True,
+            "message": "Página vazia",
+            "users": [],
+            "total": total,
+            "page": page_n,
+            "limit": limit_n,
+            "proxy_hosts": hosts,
+            "proxy_port": int(proxy_port),
+        }
+
+    workers = max(1, min(int(max_workers), 12, len(page_raw)))
+
+    def _one(raw: dict) -> dict:
+        uid = raw.get("id")
+        sid = str(uid) if uid is not None else ""
+        bal = get_balance(sid) if sid else {"status": False, "message": "ID inválido"}
+        local_row = local_map.get(sid)
+        return _serialize_subuser_admin_row(
+            raw,
+            proxy_hosts=hosts,
+            proxy_port=proxy_port,
+            balance_res=bal,
+            local_row=local_row,
+        )
+
+    enriched: list[dict] = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_one, u): u for u in page_raw}
+        for fut in as_completed(futures):
+            try:
+                enriched.append(fut.result())
+            except Exception as e:
+                raw = futures[fut]
+                enriched.append(
+                    _serialize_subuser_admin_row(
+                        raw,
+                        proxy_hosts=hosts,
+                        proxy_port=proxy_port,
+                        balance_res={"status": False, "message": str(e)[:200]},
+                        local_row=local_map.get(str(raw.get("id"))),
+                    )
+                )
+
+    enriched.sort(key=lambda x: int(x.get("id") or 0))
+    if (sort or "").strip().lower() == "id_desc":
+        enriched.sort(key=lambda x: int(x.get("id") or 0), reverse=True)
+
+    return {
+        "status": True,
+        "message": f"{len(enriched)} sub-usuário(s) nesta página",
+        "users": enriched,
+        "total": total,
+        "page": page_n,
+        "limit": limit_n,
+        "proxy_hosts": hosts,
+        "proxy_port": int(proxy_port),
+        "filters": {"q": (q or "").strip(), "status": (status or "all"), "sort": (sort or "id_desc")},
+    }
+
+
 def get_user_by_id(id: int):
     params = {
         "subuser_id": id

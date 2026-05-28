@@ -466,7 +466,7 @@ def admin_pool_countries_route():
 
 @admin_bp.route("/subusers", methods=["GET"])
 def admin_list_subusers_route():
-    from app.service.sub_usuarios import get_all_users_enriched_for_admin
+    from app.service.sub_usuarios import get_users_enriched_for_admin_page
 
     ctx, err = _authenticated_admin_or_error_response()
     if err:
@@ -484,7 +484,27 @@ def admin_list_subusers_route():
     except (TypeError, ValueError):
         port = 823
 
-    data = get_all_users_enriched_for_admin(proxy_port=port)
+    try:
+        page = max(0, int(request.args.get("page", 0)))
+    except (TypeError, ValueError):
+        page = 0
+    try:
+        limit = max(1, min(int(request.args.get("limit", 10)), 100))
+    except (TypeError, ValueError):
+        limit = 10
+
+    q = request.args.get("q") or request.args.get("search")
+    status = request.args.get("status") or "all"
+    sort = request.args.get("sort") or "id_desc"
+
+    data = get_users_enriched_for_admin_page(
+        proxy_port=port,
+        page=page,
+        limit=limit,
+        q=q,
+        status=status,
+        sort=sort,
+    )
     if not data["status"]:
         return jsonify(data), 400
     return jsonify(data), 200
