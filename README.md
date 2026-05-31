@@ -49,4 +49,14 @@ Em produção, use as mesmas chaves no painel da Vercel (não commite `.env`).
 3. Variáveis de ambiente = conteúdo de `.env.example`.
 
 Teste: `GET https://sua-api.vercel.app/api/health`
-# BACK-END-FULL-PROJETO
+
+## Módulo Sócio (revenda CPA)
+
+O painel CPA já inclui rotas e telas de sócio (`/socio`, ARE CEO, etc.). No MySQL do CPA, aplique a migração **uma vez**:
+
+```bash
+cd back-end
+python3 scripts/apply_socio_sql.py
+```
+
+SQL consolidado: `sql/cpa/INSTALL_socio_completo.sql`. Guia completo: `docs/SOCIO.md`.
