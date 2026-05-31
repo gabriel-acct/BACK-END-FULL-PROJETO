@@ -20,16 +20,38 @@ def _credential_from_body(body: dict | None) -> str | None:
 
 @api_bp.route("/branding", methods=["GET"])
 def branding_public_route():
-    """Marca do site (nome, textos, URLs de logo) — público, sem autenticação."""
+    """Marca do site; sub-usuário autenticado recebe overlay do revendedor (criado_por)."""
     try:
-        from db.queries_site_branding import get_site_branding
-        from app.service.site_branding_public import branding_to_public_api
+        from app.service.branding_resolve import get_revendedor_from_subuser_token, merge_branding_public
 
-        data = get_site_branding()
-        if not data["status"]:
+        revendedor = (request.args.get("revendedor") or "").strip() or None
+        if not revendedor:
+            revendedor = get_revendedor_from_subuser_token(request.headers.get("Authorization"))
+        data = merge_branding_public(revendedor_username=revendedor)
+        if not data.get("status"):
             return jsonify(data), 500
-        branding = branding_to_public_api(data.get("branding") or {})
-        return jsonify({"status": True, "branding": branding}), 200
+        return jsonify(data), 200
+    except Exception as e:
+        return jsonify({"status": False, "message": str(e)}), 500
+
+
+@api_bp.route("/branding/socio/<username>/<asset>", methods=["GET"])
+def branding_socio_asset_route(username: str, asset: str):
+    try:
+        from app.service.site_branding_files import resolve_socio_branding_file
+        from db.queries_socio_branding import get_socio_branding
+
+        if asset not in ("logo", "favicon"):
+            return jsonify({"status": False, "message": "Asset inválido"}), 400
+        data = get_socio_branding(username)
+        if not data.get("status"):
+            return jsonify(data), 404
+        branding = data.get("branding") or {}
+        key = "logo_filename" if asset == "logo" else "favicon_filename"
+        path = resolve_socio_branding_file(username, branding.get(key))
+        if not path:
+            return jsonify({"status": False, "message": "Arquivo não encontrado"}), 404
+        return send_file(path, conditional=True)
     except Exception as e:
         return jsonify({"status": False, "message": str(e)}), 500
 
@@ -93,6 +115,28 @@ def login_route():
             record_login_failure(client_key)
             return jsonify(data), 400
         record_login_success(client_key)
+        if data.get("role") == "socio" and data.get("user"):
+            from app.service.audit_log import write_audit
+
+            u = data["user"]
+            write_audit(
+                str(u.get("username") or "socio"),
+                "socio.login",
+                "socio",
+                str(u.get("username") or ""),
+                "Login painel revendedor",
+            )
+        if data.get("role") == "subuser":
+            from app.service.audit_log import write_audit
+
+            owner = str(data.get("criado_por") or "").strip() or "admin"
+            write_audit(
+                owner,
+                "subuser.login",
+                "subuser",
+                str(data.get("subuser_login") or ""),
+                "Cliente entrou no painel",
+            )
         return jsonify(data), 200
     except Exception as e:
         return jsonify({

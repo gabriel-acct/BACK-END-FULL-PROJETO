@@ -729,6 +729,77 @@ def list_recarga_pedidos_pix_admin(
         fechar_conexao(conn, cursor)
 
 
+def _pedidos_socio_where(criado_por: str, status_filter: str | None = None) -> tuple[str, list]:
+    wheres = [
+        "username IN (SELECT login FROM painel_subusers_local WHERE criado_por = %s AND ativo = 1)",
+    ]
+    params: list = [criado_por.strip()]
+    st = (status_filter or "").strip().lower()
+    if st:
+        wheres.append("status = %s")
+        params.append(st[:32])
+    return "WHERE " + " AND ".join(wheres), params
+
+
+def count_recarga_pedidos_pix_for_socio(criado_por: str, status_filter: str | None = None) -> int:
+    criado_por = (criado_por or "").strip()
+    if not criado_por:
+        return 0
+    conn = None
+    cursor = None
+    try:
+        conn = conexao()
+        if not conn:
+            return 0
+        cursor = conn.cursor(dictionary=True)
+        where_sql, params = _pedidos_socio_where(criado_por, status_filter)
+        cursor.execute(f"SELECT COUNT(*) AS c FROM painel_recarga_pedidos_pix {where_sql}", tuple(params))
+        row = cursor.fetchone()
+        return int(row["c"]) if row else 0
+    except Exception:
+        return 0
+    finally:
+        fechar_conexao(conn, cursor)
+
+
+def list_recarga_pedidos_pix_for_socio(
+    criado_por: str,
+    limit: int = 50,
+    offset: int = 0,
+    status_filter: str | None = None,
+):
+    criado_por = (criado_por or "").strip()
+    if not criado_por:
+        return []
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    conn = None
+    cursor = None
+    try:
+        conn = conexao()
+        if not conn:
+            return []
+        cursor = conn.cursor(dictionary=True)
+        where_sql, params = _pedidos_socio_where(criado_por, status_filter)
+        params.extend([limit, offset])
+        cursor.execute(
+            f"""
+            SELECT id, username, preco_id, gb_credito, valor_reais, status, id_externo,
+                   pushinpay_source, socio_billing_username, criado_em, atualizado_em
+            FROM painel_recarga_pedidos_pix
+            {where_sql}
+            ORDER BY id DESC
+            LIMIT %s OFFSET %s
+            """,
+            tuple(params),
+        )
+        return cursor.fetchall()
+    except Exception:
+        return []
+    finally:
+        fechar_conexao(conn, cursor)
+
+
 def recarga_pedidos_stats() -> dict:
     """Contagens por status para o dashboard admin."""
     conn = None

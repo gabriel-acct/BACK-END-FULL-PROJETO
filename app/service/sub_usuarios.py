@@ -256,11 +256,15 @@ def authenticate_subuser_by_login(login: str, password: str) -> dict:
                 row = _normalize_subuser_row(api.get("user") or api)
                 if row and row["login"] == login_s and row["password"] == password:
                     token = issue_token(row["id"])
+                    local_row = local.get("row") or {}
+                    owner = str(local_row.get("criado_por") or "").strip() or None
                     return {
                         "status": True,
                         "message": "Login realizado com sucesso",
                         "role": "subuser",
                         "token": token,
+                        "subuser_login": login_s,
+                        "criado_por": owner,
                     }
 
     data = get_all_user(use_cache=True)
@@ -278,11 +282,17 @@ def authenticate_subuser_by_login(login: str, password: str) -> dict:
             if uid is None:
                 continue
             token = issue_token(int(uid))
+            owner = None
+            local_fb = get_subuser_local_by_login(login_s)
+            if local_fb.get("status"):
+                owner = str((local_fb.get("row") or {}).get("criado_por") or "").strip() or None
             return {
                 "status": True,
                 "message": "Login realizado com sucesso",
                 "role": "subuser",
                 "token": token,
+                "subuser_login": login_s,
+                "criado_por": owner,
             }
 
     return {"status": False, "message": "Credencial inválida"}

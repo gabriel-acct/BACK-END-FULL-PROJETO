@@ -234,6 +234,76 @@ def list_audit_logs(limit: int = 50, offset: int = 0):
         fechar_conexao(conn, cursor)
 
 
+def list_audit_logs_for_actor(actor_username: str, limit: int = 50, offset: int = 0):
+    actor_username = (actor_username or "").strip()
+    if not actor_username:
+        return []
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    conn = None
+    cursor = None
+    try:
+        conn = conexao()
+        if conn is None:
+            return []
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                """
+                SELECT id, created_at, actor_username, action, target_type, target_key, detail,
+                       ip_address, user_agent
+                FROM painel_audit_log
+                WHERE actor_username = %s
+                ORDER BY id DESC
+                LIMIT %s OFFSET %s
+                """,
+                (actor_username, limit, offset),
+            )
+        except Exception:
+            cursor.execute(
+                """
+                SELECT id, created_at, actor_username, action, target_type, target_key, detail
+                FROM painel_audit_log
+                WHERE actor_username = %s
+                ORDER BY id DESC
+                LIMIT %s OFFSET %s
+                """,
+                (actor_username, limit, offset),
+            )
+        rows = cursor.fetchall()
+        for r in rows:
+            r.setdefault("ip_address", None)
+            r.setdefault("user_agent", None)
+        return rows
+    except Exception:
+        return []
+    finally:
+        fechar_conexao(conn, cursor)
+
+
+def count_audit_logs_for_actor(actor_username: str) -> int:
+    actor_username = (actor_username or "").strip()
+    if not actor_username:
+        return 0
+    conn = None
+    cursor = None
+    try:
+        conn = conexao()
+        if conn is None:
+            return 0
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM painel_audit_log WHERE actor_username = %s",
+            (actor_username,),
+        )
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+    finally:
+        fechar_conexao(conn, cursor)
+
+
 def count_audit_logs() -> int:
     conn = None
     cursor = None

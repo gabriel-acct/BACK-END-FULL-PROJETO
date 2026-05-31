@@ -3,7 +3,7 @@
 from app.service.site_branding_files import resolve_branding_file
 
 
-def branding_to_public_api(branding: dict) -> dict:
+def branding_to_public_api(branding: dict, *, socio_username: str | None = None) -> dict:
     updated = branding.get("updated_at")
     version = ""
     if updated is not None:
@@ -24,12 +24,28 @@ def branding_to_public_api(branding: dict) -> dict:
     link_logo = (branding.get("logo_url") or "").strip()
     if link_logo.lower().startswith(("http://", "https://")):
         out["logo_url"] = link_logo
-    elif branding.get("logo_filename") and resolve_branding_file(branding["logo_filename"]):
-        q = f"?v={version}" if version else ""
-        out["logo_url"] = f"/api/v1/branding/logo{q}"
+    elif branding.get("logo_filename"):
+        if socio_username:
+            from app.service.site_branding_files import resolve_socio_branding_file
 
-    if branding.get("favicon_filename") and resolve_branding_file(branding["favicon_filename"]):
-        q = f"?v={version}" if version else ""
-        out["favicon_url"] = f"/api/v1/branding/favicon{q}"
+            if resolve_socio_branding_file(socio_username, branding["logo_filename"]):
+                q = f"?v={version}" if version else ""
+                enc = socio_username.replace("/", "_")
+                out["logo_url"] = f"/api/v1/branding/socio/{enc}/logo{q}"
+        elif resolve_branding_file(branding["logo_filename"]):
+            q = f"?v={version}" if version else ""
+            out["logo_url"] = f"/api/v1/branding/logo{q}"
+
+    if branding.get("favicon_filename"):
+        if socio_username:
+            from app.service.site_branding_files import resolve_socio_branding_file
+
+            if resolve_socio_branding_file(socio_username, branding["favicon_filename"]):
+                q = f"?v={version}" if version else ""
+                enc = socio_username.replace("/", "_")
+                out["favicon_url"] = f"/api/v1/branding/socio/{enc}/favicon{q}"
+        elif resolve_branding_file(branding["favicon_filename"]):
+            q = f"?v={version}" if version else ""
+            out["favicon_url"] = f"/api/v1/branding/favicon{q}"
 
     return out

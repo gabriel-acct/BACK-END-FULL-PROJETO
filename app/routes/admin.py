@@ -650,7 +650,18 @@ def admin_create_subuser_route():
         quantity=qty,
     )
     if not ok_pool:
-        return jsonify({"status": False, "message": pool_err}), 400
+        _audit(
+            criado_por,
+            "subuser.create.denied",
+            "subuser",
+            str(label).strip()[:120],
+            pool_err,
+        )
+        return jsonify({
+            "status": False,
+            "message": pool_err,
+            "code": "gb_pool_insufficient",
+        }), 400
 
     hosts_raw = body.get("hosts") or body.get("hostnames")
     if isinstance(hosts_raw, str):
@@ -705,6 +716,14 @@ def admin_create_subuser_route():
 
         if not data["status"]:
             return jsonify(data), 400
+        created_n = len(data.get("created") or [])
+        _audit(
+            criado_por,
+            "subuser.create.batch",
+            "subuser",
+            str(label).strip()[:120],
+            f"qty={qty} gb={traffic_f} ok={created_n}",
+        )
         code = 207 if data.get("failed") else 201
         return jsonify(data), code
 
@@ -728,6 +747,14 @@ def admin_create_subuser_route():
 
     _attach_credential(data, hosts_list[0])
     data["hosts_used"] = hosts_list
+    login_out = data.get("login") or login_str or ""
+    _audit(
+        criado_por,
+        "subuser.create",
+        "subuser",
+        str(login_out)[:120] or str(label).strip()[:120],
+        f"gb={traffic_f} label={str(label).strip()[:80]}",
+    )
     return jsonify(data), 201
 
 
@@ -787,18 +814,9 @@ def _logs_payments_or_error(admin_id: int):
 
 
 def _audit(actor_username: str, action: str, target_type: str, target_key: str, detail: str | None = None):
-    from app.service.payment_logging import client_ip, user_agent
-    from db.queries_usuario import insert_audit_log
+    from app.service.audit_log import write_audit
 
-    insert_audit_log(
-        actor_username,
-        action,
-        target_type,
-        target_key,
-        detail,
-        ip_address=client_ip(),
-        user_agent=user_agent(),
-    )
+    write_audit(actor_username, action, target_type, target_key, detail)
 
 
 @admin_bp.route("/summary", methods=["GET"])
@@ -1644,3 +1662,269 @@ def admin_site_branding_favicon_delete_route():
     _audit(actor["username"], "site_branding.favicon_remove", "site_branding", "1", None)
     payload = _branding_public_payload()
     return jsonify(payload), 200
+
+
+def _socio_branding_actor_or_error():
+    actor, err = _require_socio_actor_or_error()
+    if err:
+        return None, None, err
+    from db.queries_usuario import admin_has_permission_code
+
+    if not admin_has_permission_code(actor, "socio.branding.manage") and not admin_has_permission_code(
+        actor, "dashboard.view"
+    ):
+        return None, None, (
+            jsonify({"status": False, "message": "Permissão necessária: socio.branding.manage"}),
+            403,
+        )
+    return actor, str(actor.get("username") or "").strip(), None
+
+
+def _socio_branding_public_payload(username: str):
+    from app.service.branding_resolve import merge_branding_public
+
+    return merge_branding_public(revendedor_username=username)
+
+
+def _require_socio_actor_or_error():
+    """Revendedor autenticado (cargo socio)."""
+    ctx, err = _authenticated_admin_or_error_response()
+    if err:
+        return None, err
+    _, admin_id = ctx
+    from db.queries_usuario import get_admin_completo
+
+    data = get_admin_completo(admin_id)
+    if not data.get("status"):
+        return None, (jsonify(data), 400)
+    actor = data["user"]
+    slug = str(actor.get("cargo_slug") or actor.get("cargo", {}).get("slug") or "").strip().lower()
+    if slug != "socio":
+        return None, (
+            jsonify({"status": False, "message": "Somente revendedores podem acessar este recurso."}),
+            403,
+        )
+    return actor, None
+
+
+@admin_bp.route("/socio/audit-logs", methods=["GET"])
+def admin_socio_audit_logs_route():
+    from db.queries_usuario import count_audit_logs_for_actor, list_audit_logs_for_actor
+
+    actor, err = _require_socio_actor_or_error()
+    if err:
+        return err
+    username = str(actor.get("username") or "").strip()
+
+    try:
+        page = max(0, int(request.args.get("page", 0)))
+    except (TypeError, ValueError):
+        page = 0
+    try:
+        limit = max(1, min(int(request.args.get("limit", 50)), 200))
+    except (TypeError, ValueError):
+        limit = 50
+    offset = page * limit
+
+    rows = list_audit_logs_for_actor(username, limit, offset)
+    total = count_audit_logs_for_actor(username)
+    logs = []
+    for r in rows:
+        o = dict(r)
+        o["created_at"] = _serialize_dt(o.get("created_at"))
+        logs.append(o)
+    return jsonify({"status": True, "logs": logs, "page": page, "limit": limit, "total": total}), 200
+
+
+@admin_bp.route("/socio/recarga-pedidos", methods=["GET"])
+def admin_socio_recarga_pedidos_route():
+    from db import queries_recarga as q
+
+    actor, err = _require_socio_actor_or_error()
+    if err:
+        return err
+    username = str(actor.get("username") or "").strip()
+
+    try:
+        page = max(0, int(request.args.get("page", 0)))
+    except (TypeError, ValueError):
+        page = 0
+    try:
+        limit = max(1, min(int(request.args.get("limit", 30)), 100))
+    except (TypeError, ValueError):
+        limit = 30
+    st = request.args.get("status")
+    status_filter = str(st).strip() if st else None
+    offset = page * limit
+
+    rows = q.list_recarga_pedidos_pix_for_socio(username, limit, offset, status_filter)
+    total = q.count_recarga_pedidos_pix_for_socio(username, status_filter)
+    pedidos = []
+    for r in rows:
+        o = dict(r)
+        o["criado_em"] = _serialize_dt(o.get("criado_em"))
+        o["atualizado_em"] = _serialize_dt(o.get("atualizado_em"))
+        if o.get("valor_reais") is not None:
+            o["valor_reais"] = float(o["valor_reais"])
+        if o.get("gb_credito") is not None:
+            o["gb_credito"] = float(o["gb_credito"])
+        pedidos.append(o)
+    return jsonify({"status": True, "pedidos": pedidos, "page": page, "limit": limit, "total": total}), 200
+
+
+@admin_bp.route("/socio/report", methods=["GET"])
+def admin_socio_report_route():
+    from app.service.admin_gb_pool import admin_uses_gb_pool, get_admin_gb_pool_summary
+    from db import queries_recarga as q
+    from db.queries_usuario import count_audit_logs_for_actor
+
+    actor, err = _require_socio_actor_or_error()
+    if err:
+        return err
+    username = str(actor.get("username") or "").strip()
+
+    pool = get_admin_gb_pool_summary(username) if admin_uses_gb_pool(actor) else None
+    from db.queires import list_subusers_local_map
+
+    lm = list_subusers_local_map()
+    client_count = 0
+    if lm.get("status"):
+        for row in (lm.get("map") or {}).values():
+            if str(row.get("criado_por") or "").strip() == username:
+                client_count += 1
+
+    return jsonify({
+        "status": True,
+        "gb_pool": {**pool, "applies": True} if pool else {"applies": False},
+        "clientes_total": client_count,
+        "recarga_pedidos_total": q.count_recarga_pedidos_pix_for_socio(username),
+        "recarga_pedidos_pendentes": q.count_recarga_pedidos_pix_for_socio(username, "pending"),
+        "audit_logs_total": count_audit_logs_for_actor(username),
+    }), 200
+
+
+@admin_bp.route("/socio-branding", methods=["GET"])
+def admin_socio_branding_get_route():
+    actor, username, err = _socio_branding_actor_or_error()
+    if err:
+        return err
+    from db.queries_socio_branding import get_socio_branding
+
+    data = get_socio_branding(username)
+    if not data.get("status"):
+        return jsonify(data), 500
+    from app.service.site_branding_public import branding_to_public_api
+
+    public = branding_to_public_api(data.get("branding") or {}, socio_username=username)
+    return jsonify({
+        "status": True,
+        "branding": public,
+        "admin_username": username,
+        "message": data.get("message"),
+    }), 200
+
+
+@admin_bp.route("/socio-branding", methods=["PATCH"])
+def admin_socio_branding_patch_route():
+    actor, username, err = _socio_branding_actor_or_error()
+    if err:
+        return err
+    from db.queries_socio_branding import update_socio_branding
+
+    body = request.get_json(silent=True) or {}
+    fields = {}
+    for key in (
+        "site_name",
+        "site_tagline",
+        "login_title",
+        "login_subtitle",
+        "footer_text",
+        "support_email",
+        "support_whatsapp",
+        "logo_url",
+    ):
+        if key in body:
+            fields[key] = body.get(key)
+    if not fields:
+        return jsonify({"status": False, "message": "Nenhum campo enviado"}), 400
+
+    data = update_socio_branding(username, fields, updated_by=username)
+    if not data.get("status"):
+        return jsonify(data), 400
+    _audit(username, "socio.branding.update", "socio_branding", username, ",".join(fields.keys()))
+    payload = _socio_branding_public_payload(username)
+    return jsonify(payload), 200
+
+
+@admin_bp.route("/socio-branding/logo", methods=["POST"])
+def admin_socio_branding_logo_upload_route():
+    actor, username, err = _socio_branding_actor_or_error()
+    if err:
+        return err
+    from app.service.site_branding_files import save_socio_branding_file
+    from db.queries_socio_branding import update_socio_branding
+
+    file = request.files.get("file") or request.files.get("logo")
+    saved = save_socio_branding_file(username, "logo", file)
+    if not saved["status"]:
+        return jsonify(saved), 400
+    upd = update_socio_branding(
+        username,
+        {"logo_filename": saved["filename"], "logo_url": None},
+        updated_by=username,
+    )
+    if not upd.get("status"):
+        return jsonify(upd), 400
+    _audit(username, "socio.branding.logo", "socio_branding", username, saved["filename"])
+    return jsonify(_socio_branding_public_payload(username)), 200
+
+
+@admin_bp.route("/socio-branding/logo", methods=["DELETE"])
+def admin_socio_branding_logo_delete_route():
+    actor, username, err = _socio_branding_actor_or_error()
+    if err:
+        return err
+    from app.service.site_branding_files import remove_socio_branding_file
+    from db.queries_socio_branding import update_socio_branding
+
+    remove_socio_branding_file(username, "logo")
+    update_socio_branding(username, {"logo_filename": None}, updated_by=username)
+    _audit(username, "socio.branding.logo_remove", "socio_branding", username, None)
+    return jsonify(_socio_branding_public_payload(username)), 200
+
+
+@admin_bp.route("/socio-branding/favicon", methods=["POST"])
+def admin_socio_branding_favicon_upload_route():
+    actor, username, err = _socio_branding_actor_or_error()
+    if err:
+        return err
+    from app.service.site_branding_files import save_socio_branding_file
+    from db.queries_socio_branding import update_socio_branding
+
+    file = request.files.get("file") or request.files.get("favicon")
+    saved = save_socio_branding_file(username, "favicon", file)
+    if not saved["status"]:
+        return jsonify(saved), 400
+    upd = update_socio_branding(
+        username,
+        {"favicon_filename": saved["filename"]},
+        updated_by=username,
+    )
+    if not upd.get("status"):
+        return jsonify(upd), 400
+    _audit(username, "socio.branding.favicon", "socio_branding", username, saved["filename"])
+    return jsonify(_socio_branding_public_payload(username)), 200
+
+
+@admin_bp.route("/socio-branding/favicon", methods=["DELETE"])
+def admin_socio_branding_favicon_delete_route():
+    actor, username, err = _socio_branding_actor_or_error()
+    if err:
+        return err
+    from app.service.site_branding_files import remove_socio_branding_file
+    from db.queries_socio_branding import update_socio_branding
+
+    remove_socio_branding_file(username, "favicon")
+    update_socio_branding(username, {"favicon_filename": None}, updated_by=username)
+    _audit(username, "socio.branding.favicon_remove", "socio_branding", username, None)
+    return jsonify(_socio_branding_public_payload(username)), 200

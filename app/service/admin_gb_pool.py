@@ -50,13 +50,17 @@ def assert_can_allocate_subuser_gb(
     if limite <= 0:
         return (
             False,
-            "Seu pool de GB não está configurado. O Dono deve definir o limite na criação da sua conta.",
+            "Seu pool de GB não está configurado. Peça ao Dono para definir o limite na sua conta de revendedor.",
         )
     disp = float(pool.get("disponivel_gb") or 0)
+    alocado = float(pool.get("alocado_gb") or 0)
     if need > disp + 1e-9:
         return (
             False,
-            f"Cota insuficiente no pool: precisa de {need:g} GB ({qty} × {each:g} GB), "
-            f"disponível ~{max(0.0, disp):.4f} GB.",
+            f"GB insuficiente no seu pool. Você precisa de {need:g} GB "
+            f"({'1 conta' if qty == 1 else f'{qty} contas'} × {each:g} GB cada), "
+            f"mas só restam {max(0.0, disp):.4f} GB disponíveis "
+            f"(pool {limite:g} GB · já distribuídos {alocado:g} GB). "
+            f"Crie clientes com menos GB ou peça ao Dono para aumentar seu pool.",
         )
     return True, None
