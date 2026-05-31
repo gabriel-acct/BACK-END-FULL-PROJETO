@@ -53,7 +53,7 @@ O revendedor faz login em **`/socio`** (não use `/admin`). No painel dele: **Cr
 
 Sessão em `localStorage` separada (`painel_socio_token`). Dono/admin continuam em `/admin`.
 
-Na tela de **login** (`/socio`) aparecem os cards com as áreas acima — equivalente ao menu de revendedor do CPA, **sem** área CEO / dono.
+Na tela de **login** (`/socio`) entram revendedores **Proxy Private** e **CPA** (cargo `socio`). A sessão CPA usa `gateway-panel-token`; a Private usa `painel_socio_token`.
 
 **Nota:** o módulo CPA usa `/painel-socio` (não `/socio`) para evitar conflito de rotas com este painel revendedor.
 
