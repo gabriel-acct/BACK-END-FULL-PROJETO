@@ -498,3 +498,145 @@ def create_admin_user(
         return {"status": False, "message": f"Erro ao criar administrador: {e}"}
     finally:
         fechar_conexao(conn, cursor)
+
+
+def update_admin_user(
+    target_id: int,
+    *,
+    actor_id: int,
+    actor_username: str,
+    nome: str | None = None,
+    email: str | None = None,
+    email_provided: bool = False,
+    cargo_id: int | None = None,
+    limite_gb: float | None = None,
+    limite_gb_provided: bool = False,
+    ativo: int | None = None,
+    password: str | None = None,
+) -> dict:
+    """Atualiza conta administrativa (Dono). Não altera username nem promove a Dono."""
+    base = get_admin_por_id(int(target_id))
+    if not base["status"]:
+        return base
+    row = base["user"]
+    target_slug = str(row.get("cargo_slug") or "").strip().lower()
+    is_dono_target = target_slug == "dono" or int(row.get("cargo_bypass_all") or 0) == 1
+
+    if int(target_id) == int(actor_id) and ativo is not None and int(ativo) == 0:
+        return {"status": False, "message": "Você não pode desativar a própria conta."}
+
+    nome_v = (nome or "").strip() if nome is not None else None
+    if nome is not None and not nome_v:
+        return {"status": False, "message": "Nome é obrigatório"}
+
+    if password is not None and password != "" and len(password) < 8:
+        return {"status": False, "message": "Senha deve ter no mínimo 8 caracteres"}
+
+    new_cargo_slug = target_slug
+    pool_val = row.get("limite_gb")
+
+    if cargo_id is not None and not is_dono_target:
+        conn_c = conexao()
+        cur_c = None
+        try:
+            cur_c = conn_c.cursor(dictionary=True)
+            cur_c.execute(
+                "SELECT id, slug FROM painel_cargos WHERE id = %s LIMIT 1",
+                (int(cargo_id),),
+            )
+            cargo = cur_c.fetchone()
+            if not cargo:
+                return {"status": False, "message": "Cargo não encontrado"}
+            if cargo["slug"] == "dono":
+                return {"status": False, "message": "Não é permitido atribuir cargo Dono"}
+            new_cargo_slug = str(cargo["slug"]).strip().lower()
+        finally:
+            fechar_conexao(conn_c, cur_c)
+    elif cargo_id is not None and is_dono_target:
+        return {"status": False, "message": "O cargo da conta Dono não pode ser alterado"}
+
+    if ativo is not None and is_dono_target and int(ativo) == 0:
+        return {"status": False, "message": "A conta Dono não pode ser desativada"}
+
+    effective_slug = new_cargo_slug
+    if limite_gb_provided or (limite_gb is not None and effective_slug == "socio"):
+        if effective_slug == "socio":
+            if limite_gb is None and limite_gb_provided:
+                return {"status": False, "message": "Informe limite_gb para revendedor"}
+            try:
+                pool_val = float(limite_gb) if limite_gb is not None else None
+            except (TypeError, ValueError):
+                return {"status": False, "message": "limite_gb inválido"}
+            if pool_val is None or pool_val <= 0:
+                return {"status": False, "message": "limite_gb deve ser maior que zero para revendedor"}
+            from db.queires import sum_subusers_limite_gb_criado_por
+
+            alocado = sum_subusers_limite_gb_criado_por(str(row.get("username") or ""))
+            if float(pool_val) + 1e-9 < alocado:
+                return {
+                    "status": False,
+                    "message": f"limite_gb não pode ser menor que o já alocado ({alocado:g} GB).",
+                }
+        elif limite_gb_provided:
+            pool_val = None
+
+    conn = None
+    cursor = None
+    try:
+        conn = conexao()
+        if conn is None:
+            return {"status": False, "message": "Erro ao conectar no banco de dados"}
+
+        sets: list[str] = []
+        params: list = []
+
+        if nome_v is not None:
+            sets.append("nome = %s")
+            params.append(nome_v)
+        if email_provided:
+            sets.append("email = %s")
+            params.append((email or "").strip() if email else None)
+        if cargo_id is not None and not is_dono_target:
+            sets.append("cargo_id = %s")
+            params.append(int(cargo_id))
+        if ativo is not None and not is_dono_target:
+            sets.append("ativo = %s")
+            params.append(1 if int(ativo) else 0)
+        if password:
+            sets.append("password_hash = %s")
+            params.append(generate_password_hash(password))
+        if limite_gb_provided or (limite_gb is not None and effective_slug == "socio"):
+            sets.append("limite_gb = %s")
+            params.append(float(pool_val) if effective_slug == "socio" else None)
+        elif cargo_id is not None and effective_slug != "socio":
+            sets.append("limite_gb = %s")
+            params.append(None)
+
+        if not sets:
+            return {"status": False, "message": "Nenhum campo para atualizar"}
+
+        params.append(int(target_id))
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE painel_admin_users SET {', '.join(sets)} WHERE id = %s",
+            tuple(params),
+        )
+        conn.commit()
+
+        detail_parts = [f"campos={len(sets)}"]
+        if cargo_id is not None:
+            detail_parts.append(f"cargo_id={cargo_id}")
+        insert_audit_log(
+            actor_username,
+            "admin_user.update",
+            "admin_user",
+            str(row.get("username") or target_id),
+            "; ".join(detail_parts),
+        )
+        return {"status": True, "message": "Conta atualizada com sucesso"}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return {"status": False, "message": f"Erro ao atualizar: {e}"}
+    finally:
+        fechar_conexao(conn, cursor)

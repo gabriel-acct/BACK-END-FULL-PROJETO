@@ -48,10 +48,12 @@ def _login_admin(username: str, password: str) -> dict:
         return completo
 
     token = issue_admin_token(int(admin_id))
+    slug = str(completo["user"].get("cargo_slug") or "").strip().lower()
+    role = "socio" if slug == "socio" else "admin"
     return {
         "status": True,
         "message": auth["message"],
-        "role": "admin",
+        "role": role,
         "token": token,
         "user": _format_admin_user_for_api(completo["user"]),
     }

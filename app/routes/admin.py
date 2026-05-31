@@ -451,6 +451,71 @@ def admin_create_admin_user_route():
     return jsonify(data), 201
 
 
+@admin_bp.route("/admin-users/<int:user_id>", methods=["PATCH"])
+def admin_update_admin_user_route(user_id: int):
+    from db.queries_usuario import get_admin_por_id, update_admin_user
+
+    ctx, err = _authenticated_admin_or_error_response()
+    if err:
+        body, code = err
+        return body, code
+
+    actor_row, err = _require_dono_or_error_response(ctx[1])
+    if err:
+        body, code = err
+        return body, code
+
+    body = request.get_json(silent=True) or {}
+    nome = body.get("nome")
+    cargo_id = body.get("cargo_id")
+    ativo = body.get("ativo")
+    password = body.get("password")
+
+    limite_gb = None
+    limite_gb_provided = "limite_gb" in body
+    if limite_gb_provided:
+        raw = body.get("limite_gb")
+        if raw is not None and raw != "":
+            try:
+                limite_gb = float(raw)
+            except (TypeError, ValueError):
+                return jsonify({"status": False, "message": "limite_gb inválido"}), 400
+
+    parsed_cargo = None
+    if cargo_id is not None and cargo_id != "":
+        try:
+            parsed_cargo = int(cargo_id)
+        except (TypeError, ValueError):
+            return jsonify({"status": False, "message": "cargo_id inválido"}), 400
+
+    parsed_ativo = None
+    if ativo is not None and ativo != "":
+        parsed_ativo = 1 if ativo in (True, 1, "1", "true", "ativo") else 0
+
+    email_provided = "email" in body
+    email_arg = str(body.get("email") or "").strip() or None if email_provided else None
+
+    actor = get_admin_por_id(ctx[1])
+    actor_username = actor["user"]["username"] if actor.get("status") else actor_row.get("username", "unknown")
+
+    data = update_admin_user(
+        user_id,
+        actor_id=int(ctx[1]),
+        actor_username=actor_username,
+        nome=str(nome).strip() if nome is not None else None,
+        email=email_arg,
+        email_provided=email_provided,
+        cargo_id=parsed_cargo,
+        limite_gb=limite_gb,
+        limite_gb_provided=limite_gb_provided,
+        ativo=parsed_ativo,
+        password=str(password) if password else None,
+    )
+    if not data["status"]:
+        return jsonify(data), 400
+    return jsonify(data), 200
+
+
 @admin_bp.route("/pool-countries", methods=["GET"])
 def admin_pool_countries_route():
     """Lista países disponíveis no pool (API DataImpulse) para o formulário de criação."""
