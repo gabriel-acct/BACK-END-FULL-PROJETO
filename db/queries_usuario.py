@@ -28,6 +28,7 @@ def get_admin_por_id(user_id: int) -> dict:
             """
             SELECT u.id, u.username, u.nome, u.email, u.ativo, u.ultimo_login_at,
                    u.created_at, u.updated_at,
+                   CAST(u.limite_gb AS DECIMAL(12, 3)) AS limite_gb,
                    c.id AS cargo_id, c.slug AS cargo_slug, c.nome AS cargo_nome,
                    c.bypass_all AS cargo_bypass_all
             FROM painel_admin_users u
@@ -142,6 +143,7 @@ def list_admin_users() -> dict:
             """
             SELECT u.id, u.username, u.nome, u.email, u.ativo, u.ultimo_login_at,
                    u.created_at,
+                   CAST(u.limite_gb AS DECIMAL(12, 3)) AS limite_gb,
                    c.id AS cargo_id, c.slug AS cargo_slug, c.nome AS cargo_nome
             FROM painel_admin_users u
             INNER JOIN painel_cargos c ON c.id = u.cargo_id
@@ -302,6 +304,88 @@ def insert_audit_log(
         fechar_conexao(conn, cursor)
 
 
+def get_admin_gb_pool_summary(admin_username: str) -> dict:
+    """Pool de GB do revendedor (sócio): limite na conta admin vs soma nos sub-usuários locais."""
+    from db.queires import sum_subusers_limite_gb_criado_por
+
+    admin_username = (admin_username or "").strip()
+    limite = 0.0
+    conn = None
+    cursor = None
+    try:
+        conn = conexao()
+        if conn is None:
+            return {"limite_gb": 0.0, "alocado_gb": 0.0, "disponivel_gb": 0.0}
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT CAST(limite_gb AS DECIMAL(12, 3)) AS limite_gb
+            FROM painel_admin_users
+            WHERE username = %s
+            LIMIT 1
+            """,
+            (admin_username,),
+        )
+        row = cursor.fetchone()
+        if row and row.get("limite_gb") is not None:
+            limite = float(row["limite_gb"])
+    except Exception:
+        limite = 0.0
+    finally:
+        fechar_conexao(conn, cursor)
+
+    alocado = sum_subusers_limite_gb_criado_por(admin_username)
+    disp = max(0.0, limite - alocado)
+    return {
+        "limite_gb": round(limite, 6),
+        "alocado_gb": round(alocado, 6),
+        "disponivel_gb": round(disp, 6),
+    }
+
+
+def update_admin_limite_gb(user_id: int, limite_gb: float) -> dict:
+    if limite_gb < 0 or limite_gb > 1_000_000:
+        return {"status": False, "message": "limite_gb fora do intervalo permitido"}
+
+    base = get_admin_por_id(user_id)
+    if not base["status"]:
+        return base
+    row = base["user"]
+    slug = str(row.get("cargo_slug") or "").strip().lower()
+    if slug != "socio":
+        return {"status": False, "message": "limite_gb só se aplica a contas com cargo Sócio / Revendedor"}
+
+    alocado = 0.0
+    from db.queires import sum_subusers_limite_gb_criado_por
+
+    alocado = sum_subusers_limite_gb_criado_por(str(row.get("username") or ""))
+    if float(limite_gb) + 1e-9 < alocado:
+        return {
+            "status": False,
+            "message": f"limite_gb não pode ser menor que o já alocado aos sub-usuários ({alocado:g} GB).",
+        }
+
+    conn = None
+    cursor = None
+    try:
+        conn = conexao()
+        if conn is None:
+            return {"status": False, "message": "Erro ao conectar no banco de dados"}
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE painel_admin_users SET limite_gb = %s WHERE id = %s",
+            (float(limite_gb), int(user_id)),
+        )
+        conn.commit()
+        return {"status": True, "message": "Pool de GB atualizado"}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return {"status": False, "message": str(e)[:300]}
+    finally:
+        fechar_conexao(conn, cursor)
+
+
 def create_admin_user(
     *,
     username: str,
@@ -310,6 +394,7 @@ def create_admin_user(
     email: str | None,
     cargo_id: int,
     actor_username: str,
+    limite_gb: float | None = None,
 ) -> dict:
     """Cria conta em painel_admin_users (somente cargo diferente de Dono)."""
     user = (username or "").strip()
@@ -347,6 +432,20 @@ def create_admin_user(
                 "message": "Não é permitido criar outro usuário com cargo Dono",
             }
 
+        pool_gb = None
+        if cargo["slug"] == "socio":
+            if limite_gb is None:
+                return {
+                    "status": False,
+                    "message": "Para cargo Sócio / Revendedor, informe limite_gb (pool de GB).",
+                }
+            try:
+                pool_gb = float(limite_gb)
+            except (TypeError, ValueError):
+                return {"status": False, "message": "limite_gb inválido"}
+            if pool_gb <= 0:
+                return {"status": False, "message": "limite_gb deve ser maior que zero para revendedor"}
+
         cursor.execute(
             "SELECT id FROM painel_admin_users WHERE username = %s LIMIT 1",
             (user,),
@@ -355,13 +454,28 @@ def create_admin_user(
             return {"status": False, "message": "Nome de usuário já está em uso"}
 
         password_hash = generate_password_hash(password)
-        cursor.execute(
-            """
-            INSERT INTO painel_admin_users (username, password_hash, nome, email, cargo_id, ativo)
-            VALUES (%s, %s, %s, %s, %s, 1)
-            """,
-            (user, password_hash, nome_v, email_v, int(cargo_id)),
-        )
+        try:
+            cursor.execute(
+                """
+                INSERT INTO painel_admin_users
+                  (username, password_hash, nome, email, cargo_id, ativo, limite_gb)
+                VALUES (%s, %s, %s, %s, %s, 1, %s)
+                """,
+                (user, password_hash, nome_v, email_v, int(cargo_id), pool_gb),
+            )
+        except Exception:
+            cursor.execute(
+                """
+                INSERT INTO painel_admin_users (username, password_hash, nome, email, cargo_id, ativo)
+                VALUES (%s, %s, %s, %s, %s, 1)
+                """,
+                (user, password_hash, nome_v, email_v, int(cargo_id)),
+            )
+            if cargo["slug"] == "socio":
+                return {
+                    "status": False,
+                    "message": "Execute a migração sql/010_painel_admin_socio_revenda.sql no banco painel_reseller.",
+                }
         new_id = cursor.lastrowid
         conn.commit()
 

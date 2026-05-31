@@ -13,9 +13,12 @@ from db.queries_usuario import get_admin_completo
 
 
 def _format_admin_user_for_api(row: dict) -> dict:
+    from app.service.admin_gb_pool import admin_uses_gb_pool
+    from db.queries_usuario import get_admin_gb_pool_summary
+
     perms = row.get("permissions") or []
     bypass = bool(int(row.get("cargo_bypass_all") or 0))
-    return {
+    out = {
         "id": row["id"],
         "username": row["username"],
         "nome": row["nome"],
@@ -28,6 +31,10 @@ def _format_admin_user_for_api(row: dict) -> dict:
             "permissions": perms if not bypass else [],
         },
     }
+    if admin_uses_gb_pool(row):
+        pool = get_admin_gb_pool_summary(str(row.get("username") or ""))
+        out["gb_pool"] = {**pool, "applies": True}
+    return out
 
 
 def _login_admin(username: str, password: str) -> dict:

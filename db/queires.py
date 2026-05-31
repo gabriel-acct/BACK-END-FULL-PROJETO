@@ -450,3 +450,31 @@ def insert_subuser_local(
         return {"status": False, "message": f"Erro ao salvar sub-usuário local: {e}"}
     finally:
         fechar_conexao(conn, cursor)
+
+
+def sum_subusers_limite_gb_criado_por(criado_por: str) -> float:
+    """Soma limite_gb dos sub-usuários locais criados por este administrador (pool revenda)."""
+    criado_por = (criado_por or "").strip()
+    if not criado_por:
+        return 0.0
+    conn = None
+    cursor = None
+    try:
+        conn = conexao()
+        if conn is None:
+            return 0.0
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT COALESCE(SUM(CAST(limite_gb AS DECIMAL(12, 3))), 0)
+            FROM painel_subusers_local
+            WHERE criado_por = %s AND ativo = 1
+            """,
+            (criado_por,),
+        )
+        row = cursor.fetchone()
+        return float(row[0] if row else 0)
+    except Exception:
+        return 0.0
+    finally:
+        fechar_conexao(conn, cursor)

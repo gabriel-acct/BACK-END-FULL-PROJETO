@@ -426,6 +426,14 @@ def admin_create_admin_user_route():
             "message": "Campos obrigatórios: username, password, nome, cargo_id",
         }), 400
 
+    raw_limite = body.get("limite_gb")
+    limite_gb = None
+    if raw_limite is not None and raw_limite != "":
+        try:
+            limite_gb = float(raw_limite)
+        except (TypeError, ValueError):
+            return jsonify({"status": False, "message": "limite_gb inválido"}), 400
+
     actor = get_admin_por_id(admin_id)
     actor_username = actor["user"]["username"] if actor.get("status") else actor_row.get("username", "unknown")
 
@@ -436,6 +444,7 @@ def admin_create_admin_user_route():
         email=str(email).strip() if email else None,
         cargo_id=int(cargo_id),
         actor_username=actor_username,
+        limite_gb=limite_gb,
     )
     if not data["status"]:
         return jsonify(data), 400
@@ -466,7 +475,9 @@ def admin_pool_countries_route():
 
 @admin_bp.route("/subusers", methods=["GET"])
 def admin_list_subusers_route():
+    from app.service.admin_gb_pool import admin_uses_gb_pool
     from app.service.sub_usuarios import get_users_enriched_for_admin_page
+    from db.queries_usuario import get_admin_completo
 
     ctx, err = _authenticated_admin_or_error_response()
     if err:
@@ -478,6 +489,13 @@ def admin_list_subusers_route():
     if err:
         body, code = err
         return body, code
+
+    only_owner = None
+    admin_base = get_admin_completo(admin_id)
+    if admin_base.get("status"):
+        actor = admin_base["user"]
+        if admin_uses_gb_pool(actor):
+            only_owner = str(actor.get("username") or "").strip() or None
 
     try:
         port = int(request.args.get("proxy_port") or 823)
@@ -504,6 +522,7 @@ def admin_list_subusers_route():
         q=q,
         status=status,
         sort=sort,
+        only_criado_por=only_owner,
     )
     if not data["status"]:
         return jsonify(data), 400
@@ -514,7 +533,6 @@ def admin_list_subusers_route():
 @admin_bp.route("/create-subuser", methods=["POST"])
 def admin_create_subuser_route():
     from app.service.sub_usuarios import create_subuser_with_balance
-    from db.queries_usuario import get_admin_por_id
 
     ctx, err = _authenticated_admin_or_error_response()
     if err:
@@ -553,12 +571,21 @@ def admin_create_subuser_route():
     if qty < 1:
         return jsonify({"status": False, "message": "quantity deve ser pelo menos 1"}), 400
 
-    actor_row = get_admin_por_id(admin_id)
-    criado_por = (
-        actor_row["user"]["username"]
-        if actor_row.get("status")
-        else actor.get("username", "admin")
+    criado_por = str(actor.get("username") or "admin")
+
+    from app.service.admin_gb_pool import assert_can_allocate_subuser_gb
+
+    try:
+        traffic_f = float(traffic_gb)
+    except (TypeError, ValueError):
+        return jsonify({"status": False, "message": "traffic_gb inválido"}), 400
+    ok_pool, pool_err = assert_can_allocate_subuser_gb(
+        actor,
+        traffic_gb=traffic_f,
+        quantity=qty,
     )
+    if not ok_pool:
+        return jsonify({"status": False, "message": pool_err}), 400
 
     hosts_raw = body.get("hosts") or body.get("hostnames")
     if isinstance(hosts_raw, str):
@@ -758,7 +785,40 @@ def admin_summary_route():
     if can_audit:
         out["audit_logs_total"] = count_audit_logs()
 
+    from app.service.admin_gb_pool import admin_uses_gb_pool
+    from db.queries_usuario import get_admin_gb_pool_summary
+
+    if admin_uses_gb_pool(admin_user):
+        pool = get_admin_gb_pool_summary(str(admin_user.get("username") or ""))
+        out["gb_pool"] = {**pool, "applies": True}
+    else:
+        out["gb_pool"] = {"applies": False}
+
     return jsonify(out), 200
+
+
+@admin_bp.route("/gb-pool", methods=["GET"])
+def admin_gb_pool_route():
+    """Resumo do pool de GB do revendedor (cargo socio)."""
+    from app.service.admin_gb_pool import admin_uses_gb_pool
+    from db.queries_usuario import get_admin_completo, get_admin_gb_pool_summary
+
+    ctx, err = _authenticated_admin_or_error_response()
+    if err:
+        return err
+    _, admin_id = ctx
+    base = get_admin_completo(admin_id)
+    if not base.get("status"):
+        return jsonify({"status": False, "message": base.get("message")}), 403
+    user = base["user"]
+    if not admin_uses_gb_pool(user):
+        return jsonify({
+            "status": True,
+            "applies": False,
+            "message": "Pool de GB não se aplica a este cargo.",
+        }), 200
+    pool = get_admin_gb_pool_summary(str(user.get("username") or ""))
+    return jsonify({"status": True, "applies": True, **pool}), 200
 
 
 @admin_bp.route("/payment-logs", methods=["GET"])

@@ -498,6 +498,7 @@ def get_users_enriched_for_admin_page(
     status: str | None = None,
     sort: str | None = None,
     max_workers: int = 8,
+    only_criado_por: str | None = None,
 ) -> dict:
     """
     Paginação no painel admin:
@@ -532,10 +533,20 @@ def get_users_enriched_for_admin_page(
         local_map = lm.get("map") or {}
 
     users_raw = base.get("users") or []
+    owner = (only_criado_por or "").strip()
+    if owner and users_raw:
+        scoped: list[dict] = []
+        for u in users_raw:
+            sid = str(u.get("id") if u.get("id") is not None else "")
+            loc = local_map.get(sid) if sid else None
+            if loc and str(loc.get("criado_por") or "").strip() == owner:
+                scoped.append(u)
+        users_raw = scoped
+
     if not users_raw:
         return {
             "status": True,
-            "message": "Nenhum usuário na API",
+            "message": "Nenhum usuário na API" if not owner else "Nenhum sub-usuário criado por você",
             "users": [],
             "total": 0,
             "page": page_n,
