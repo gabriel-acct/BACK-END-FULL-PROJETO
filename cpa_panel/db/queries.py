@@ -1445,13 +1445,28 @@ def update_user_limite_gb(username: str, limite_gb: float) -> tuple[bool, str | 
                 f"limite_gb do sócio não pode ser menor que a soma das cotas dos clientes ({soma_filhos} GB).",
             )
 
+    old_gb = float(row.get("limite_gb") or 0)
+    new_gb = float(limite_gb)
+    aumentou_gb = new_gb > old_gb + 1e-9
+
     conn = conexao_bd()
     cursor = conn.cursor()
     try:
-        cursor.execute(
-            "UPDATE usuarios_proxy SET limite_gb = %s WHERE username = %s",
-            (float(limite_gb), username),
-        )
+        if aumentou_gb:
+            # Igual à recarga PIX: acréscimo de GB volta a contar na ARE CEO (mantém baseline).
+            cursor.execute(
+                """
+                UPDATE usuarios_proxy
+                SET limite_gb = %s, custo_pago = 0
+                WHERE username = %s
+                """,
+                (new_gb, username),
+            )
+        else:
+            cursor.execute(
+                "UPDATE usuarios_proxy SET limite_gb = %s WHERE username = %s",
+                (new_gb, username),
+            )
         ok = cursor.rowcount >= 1
         conn.commit()
         return (ok, None) if ok else (False, "Usuário não encontrado")
